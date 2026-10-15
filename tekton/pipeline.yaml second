@@ -1,0 +1,57 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: tax-calculator-pipeline
+spec:
+  description: Install npm dependencies, test with Jasmine, then build/push a container image.
+  params:
+    - name: image
+      type: string
+      description: Fully qualified registry image, e.g. us.icr.io/REPLACE_NAMESPACE/tax-calculator:latest
+  workspaces:
+    - name: shared-workspace
+      description: Workspace containing package.json, Dockerfile and the application files
+    - name: docker-config
+      description: Docker auth configuration for pushing to the container registry
+  tasks:
+    - name: npminstall
+      taskRef:
+        name: npm-install
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+    - name: tests
+      runAfter: [npminstall]
+      taskRef:
+        name: jasmine-tests
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+    - name: build
+      runAfter: [tests]
+      params:
+        - name: IMAGE
+          value: $(params.image)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: docker-config
+          workspace: docker-config
+      taskSpec:
+        params:
+          - name: IMAGE
+            type: string
+        workspaces:
+          - name: source
+          - name: docker-config
+        steps:
+          - name: build-and-push
+            image: gcr.io/kaniko-project/executor:v1.23.2
+            workingDir: $(workspaces.source.path)
+            env:
+              - name: DOCKER_CONFIG
+                value: $(workspaces.docker-config.path)
+            args:
+              - --dockerfile=$(workspaces.source.path)/Dockerfile
+              - --context=$(workspaces.source.path)
+              - --destination=$(params.IMAGE)
